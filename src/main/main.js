@@ -53,21 +53,14 @@ let allowQuit = false;
 let pendingWarnings = [];
 let lastError = null;
 
-if (!IS_UTILITY_RUN && !app.requestSingleInstanceLock()) {
-  app.quit();
-} else {
-  if (!IS_UTILITY_RUN) {
-    app.on('second-instance', () => {
-      showMainWindow();
-    });
-  }
-  boot();
-}
-
-function boot() {
+// 注意顺序：必须先初始化便携数据目录（app.setPath userData），
+// 再申请单实例锁。否则 Electron 会在 %APPDATA% 下创建 lockfile，
+// 破坏“数据只在程序文件夹”的便携承诺。
+function initCore() {
   try {
     paths = initPaths();
     logger = createLogger(paths.logsDir);
+    return true;
   } catch (err) {
     dialog.showErrorBox(
       '数据文件夹无法写入',
@@ -76,9 +69,24 @@ function boot() {
         `详细信息：${err && err.message ? err.message : err}`
     );
     app.exit(1);
-    return;
+    return false;
   }
+}
 
+if (initCore()) {
+  if (!IS_UTILITY_RUN && !app.requestSingleInstanceLock()) {
+    app.quit();
+  } else {
+    if (!IS_UTILITY_RUN) {
+      app.on('second-instance', () => {
+        showMainWindow();
+      });
+    }
+    boot();
+  }
+}
+
+function boot() {
   app.setAppUserModelId('com.local.clipboardhistory');
 
   watcher = new ClipboardWatcher({ logger });
