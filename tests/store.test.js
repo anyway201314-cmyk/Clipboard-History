@@ -144,6 +144,24 @@ test('store: 数据版本高于程序支持版本时拒绝加载', async () => {
   }
 });
 
+test('store: 写入失败时保持 dirty 并抛出', async () => {
+  const dir = makeTempDir();
+  try {
+    const store = new Store({ dataDir: dir });
+    await store.load();
+    store.state.items.push(makeTextItem(1));
+    store.markDirty();
+
+    // 把临时文件路径变成目录，迫使写入失败
+    fs.mkdirSync(path.join(dir, 'index.json.tmp'));
+
+    await assert.rejects(store.flush());
+    assert.equal(store.dirty, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('store: syncBackup 写入后备份与主文件一致', async () => {
   const dir = makeTempDir();
   try {
