@@ -15,6 +15,7 @@ const COLORS = {
   bg: [11, 30, 54, 255], // #0B1E36
   light: [232, 238, 247, 255], // #E8EEF7
   accent: [76, 141, 255, 255], // #4C8DFF
+  trayDark: [45, 45, 45, 255], // #2D2D2D（浅色任务栏使用）
 };
 
 // ---------- PNG 编码 ----------
@@ -161,15 +162,15 @@ function downsample(canvas, factor) {
 
 // ---------- 图形绘制 ----------
 
-function drawTray(size) {
+function drawTray(size, color = COLORS.light) {
   const s = size * SS;
   const canvas = createCanvas(s, s);
   const u = (v) => v * s;
 
   // 剪贴板主体
-  fillRoundedRect(canvas, u(0.22), u(0.14), u(0.78), u(0.9), u(0.08), COLORS.light);
+  fillRoundedRect(canvas, u(0.22), u(0.14), u(0.78), u(0.9), u(0.08), color);
   // 顶部夹子
-  fillRoundedRect(canvas, u(0.4), u(0.04), u(0.6), u(0.2), u(0.04), COLORS.light);
+  fillRoundedRect(canvas, u(0.4), u(0.04), u(0.6), u(0.2), u(0.04), color);
   // 三条镂空横线（显出背景色，形成“内容”纹理）
   eraseRoundedRect(canvas, u(0.32), u(0.36), u(0.68), u(0.42), u(0.02));
   eraseRoundedRect(canvas, u(0.32), u(0.5), u(0.68), u(0.56), u(0.02));
@@ -241,6 +242,8 @@ fs.mkdirSync(BUILD, { recursive: true });
 
 writePNG(path.join(ASSETS, 'tray-16.png'), drawTray(16));
 writePNG(path.join(ASSETS, 'tray-32.png'), drawTray(32));
+writePNG(path.join(ASSETS, 'tray-dark-16.png'), drawTray(16, COLORS.trayDark));
+writePNG(path.join(ASSETS, 'tray-dark-32.png'), drawTray(32, COLORS.trayDark));
 writePNG(path.join(ASSETS, 'app-icon.png'), drawAppIcon(256));
 writePNG(path.join(BUILD, 'icon.png'), drawAppIcon(256));
 

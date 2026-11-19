@@ -14,6 +14,7 @@ const {
   session,
   powerMonitor,
   protocol,
+  nativeTheme,
 } = require('electron');
 
 const { initPaths } = require('./paths');
@@ -261,7 +262,7 @@ function createMainWindow() {
     resizable: true,
     frame: false,
     icon: resolveAsset('app-icon.png'),
-    backgroundColor: '#0B1E36',
+    backgroundMaterial: 'acrylic',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
@@ -340,12 +341,18 @@ function showMainWindow() {
   mainWindow.focus();
 }
 
-function createTray() {
-  let icon = nativeImage.createFromPath(resolveAsset('tray-32.png'));
+function trayIcon() {
+  // 任务栏深色 → 浅色图标；任务栏浅色 → 深色图标
+  const name = nativeTheme.shouldUseDarkColors ? 'tray-32.png' : 'tray-dark-32.png';
+  let icon = nativeImage.createFromPath(resolveAsset(name));
   if (icon.isEmpty()) {
     icon = nativeImage.createFromPath(resolveAsset('app-icon.png'));
   }
-  tray = new Tray(icon);
+  return icon;
+}
+
+function createTray() {
+  tray = new Tray(trayIcon());
   tray.setToolTip('历史剪贴板');
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -366,6 +373,9 @@ function createTray() {
     } else {
       showMainWindow();
     }
+  });
+  nativeTheme.on('updated', () => {
+    if (tray && !tray.isDestroyed()) tray.setImage(trayIcon());
   });
   logger.info('app', 'tray created');
 }

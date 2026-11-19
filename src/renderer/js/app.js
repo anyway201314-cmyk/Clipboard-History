@@ -14,6 +14,8 @@
   };
 
   const listEl = document.getElementById('list');
+  const searchWrap = document.getElementById('search-wrap');
+  const searchToggle = document.getElementById('search-toggle');
   const searchInput = document.getElementById('search');
   const searchClear = document.getElementById('search-clear');
   const bannerEl = document.getElementById('banner');
@@ -61,6 +63,24 @@
 
   function updateClearButton() {
     searchClear.classList.toggle('hidden', searchInput.value.length === 0);
+  }
+
+  function isSearchExpanded() {
+    return searchWrap.classList.contains('expanded');
+  }
+
+  function expandSearch() {
+    if (isSearchExpanded()) return;
+    searchWrap.classList.add('expanded');
+    searchToggle.setAttribute('aria-expanded', 'true');
+  }
+
+  function collapseSearch() {
+    if (!isSearchExpanded()) return;
+    if (searchInput.value.trim().length > 0) return;
+    searchWrap.classList.remove('expanded');
+    searchToggle.setAttribute('aria-expanded', 'false');
+    if (document.activeElement === searchInput) searchInput.blur();
   }
 
   function createActionButton(svg, label, className) {
@@ -303,17 +323,42 @@
 
   closeBtn.addEventListener('click', () => window.api.hideWindow());
 
+  searchToggle.addEventListener('click', () => {
+    if (!isSearchExpanded()) {
+      expandSearch();
+      searchInput.focus();
+    } else if (searchInput.value.trim().length === 0) {
+      collapseSearch();
+    } else {
+      searchInput.focus();
+    }
+  });
+
+  searchInput.addEventListener('focus', expandSearch);
+  searchInput.addEventListener('blur', () => {
+    setTimeout(() => {
+      if (document.activeElement !== searchInput && searchInput.value.trim().length === 0) {
+        collapseSearch();
+      }
+    }, 150);
+  });
+
   document.addEventListener('keydown', (event) => {
     if (event.isComposing) return;
     if (event.key === 'Escape') {
-      if (searchInput.value.length > 0) {
-        clearSearch();
-        searchInput.focus();
+      if (isSearchExpanded()) {
+        if (searchInput.value.length > 0) {
+          clearSearch();
+          searchInput.focus();
+        } else {
+          collapseSearch();
+        }
       } else {
         window.api.hideWindow();
       }
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
       event.preventDefault();
+      expandSearch();
       searchInput.focus();
       searchInput.select();
     }

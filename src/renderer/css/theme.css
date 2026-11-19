@@ -1,19 +1,21 @@
 :root {
-  --bg: #0b1e36;
-  --bg-elevated: #12294a;
-  --bg-hover: #17335c;
-  --bg-active: #1b3a66;
-  --border: #1e3a60;
-  --accent: #4c8dff;
-  --accent-hover: #6aa3ff;
-  --accent-soft: rgba(76, 141, 255, 0.16);
-  --text: #e8eef7;
-  --text-secondary: #9fb3cc;
-  --text-muted: #6e82a0;
-  --danger: #e05c5c;
-  --danger-soft: rgba(224, 92, 92, 0.16);
-  --success: #3fa67a;
-  --toast-bg: #17335c;
+  --bg: rgba(255, 255, 255, 0.78);
+  --bg-fallback: #f5f7fa;
+  --bg-elevated: rgba(255, 255, 255, 0.6);
+  --bg-hover: rgba(255, 255, 255, 0.86);
+  --bg-active: rgba(255, 255, 255, 0.96);
+  --border: rgba(0, 0, 0, 0.1);
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --accent-soft: rgba(29, 78, 216, 0.12);
+  --text: #111111;
+  --text-secondary: #555555;
+  --text-muted: #8a8f98;
+  --danger: #c62828;
+  --danger-soft: rgba(198, 40, 40, 0.1);
+  --success: #2e7d32;
+  --toast-bg: rgba(32, 33, 36, 0.92);
+  --toast-text: #ffffff;
 }
 
 * {
@@ -23,6 +25,10 @@
 html,
 body {
   height: 100%;
+}
+
+html {
+  background: transparent;
 }
 
 body {

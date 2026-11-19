@@ -101,6 +101,14 @@ class CDP {
     `({ cards: document.querySelectorAll('.card').length, pinnedCards: document.querySelectorAll('.card.pinned').length, sections: [...document.querySelectorAll('.section-title')].map((el) => el.textContent.trim()) })`
   );
 
+  output.theme = await cdp.evaluate(
+    `(() => { const style = getComputedStyle(document.body); return { background: style.backgroundColor, color: style.color }; })()`
+  );
+  output.searchToggle = await cdp.evaluate(
+    `(() => { const toggle = document.getElementById('search-toggle'); toggle.click(); return { expanded: document.getElementById('search-wrap').classList.contains('expanded'), aria: toggle.getAttribute('aria-expanded') }; })()`
+  );
+  await sleep(250);
+
   await cdp.evaluate(
     `(() => { const el = document.getElementById('search'); el.value = 'PERSIST'; el.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`
   );
@@ -128,6 +136,10 @@ class CDP {
     output.afterRemove = await cdp.evaluate(`({ cards: document.querySelectorAll('.card').length })`);
     output.removedId = removeTarget.id;
   }
+
+  output.searchCollapse = await cdp.evaluate(
+    `(() => { const toggle = document.getElementById('search-toggle'); toggle.click(); return { expanded: document.getElementById('search-wrap').classList.contains('expanded'), aria: toggle.getAttribute('aria-expanded') }; })()`
+  );
 
   output.pinnedId = pinTarget.id;
   console.log(JSON.stringify(output, null, 2));
