@@ -1,6 +1,7 @@
 param(
   [string]$OutFile = "$env:TEMP\clipboard-ui.png",
-  [string]$ProcessName = "electron"
+  [string]$ProcessName = "electron",
+  [string]$PathFilter = ""
 )
 
 Add-Type -AssemblyName System.Drawing
@@ -17,9 +18,15 @@ public class Win32Util {
 "@
 [Win32Util]::SetProcessDPIAware() | Out-Null
 
-$process = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
-  Where-Object { $_.MainWindowHandle -ne 0 } |
-  Select-Object -First 1
+if ($PathFilter) {
+  $process = Get-Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path -like $PathFilter } |
+    Select-Object -First 1
+} else {
+  $process = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowHandle -ne 0 } |
+    Select-Object -First 1
+}
 
 if (-not $process) {
   Write-Output "window not found"

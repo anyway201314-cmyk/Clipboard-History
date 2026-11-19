@@ -1,9 +1,9 @@
 :root {
-  --bg: rgba(255, 255, 255, 0.78);
+  --bg: rgba(255, 255, 255, 0.55);
   --bg-fallback: #f5f7fa;
-  --bg-elevated: rgba(255, 255, 255, 0.6);
-  --bg-hover: rgba(255, 255, 255, 0.86);
-  --bg-active: rgba(255, 255, 255, 0.96);
+  --bg-elevated: rgba(255, 255, 255, 0.62);
+  --bg-hover: rgba(255, 255, 255, 0.82);
+  --bg-active: rgba(255, 255, 255, 0.92);
   --border: rgba(0, 0, 0, 0.1);
   --accent: #1d4ed8;
   --accent-hover: #1e40af;

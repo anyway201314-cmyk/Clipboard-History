@@ -15,7 +15,8 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  -webkit-app-region: no-drag;
+  /* 图标之间的空白区域用于拖动窗口；可交互元素单独设置 no-drag */
+  -webkit-app-region: drag;
 }
 
 .search-toggle {
@@ -58,6 +59,7 @@
   opacity: 0;
   overflow: hidden;
   transition: flex-grow 180ms ease, opacity 140ms ease;
+  -webkit-app-region: no-drag;
 }
 
 .search-wrap.expanded .search-field {
@@ -71,7 +73,7 @@
   padding: 0 30px 0 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.66);
   color: var(--text);
   font-family: inherit;
   font-size: 13px;
@@ -201,7 +203,7 @@
   background: var(--bg-elevated);
   border-radius: 10px;
   padding: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.08);
   cursor: pointer;
   outline: none;
 }
@@ -445,7 +447,7 @@
   padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.78);
   color: var(--text);
   font-family: inherit;
   font-size: 13px;

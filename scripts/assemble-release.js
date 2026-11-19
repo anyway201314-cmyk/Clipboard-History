@@ -93,11 +93,13 @@ if (exeHash !== officialHash) {
   fail('主程序哈希与官方 electron.exe 不一致，可能被智能应用控制拦截');
 }
 
-// 8. 生成 SHA256
+// 8. 生成 SHA256（包含应用代码包，便于核对实际程序内容）
 const guideBuffer = fs.readFileSync(path.join(TARGET_DIR, '使用说明.txt'));
 const iconBuffer = fs.readFileSync(ICON_TARGET);
+const asarBuffer = fs.readFileSync(path.join(TARGET_DIR, 'resources', 'app.asar'));
 const hashLines = [
   `SHA256 (${EXE_NAME}) = ${exeHash}`,
+  'SHA256 (resources/app.asar) = ' + sha256(asarBuffer),
   'SHA256 (使用说明.txt) = ' + sha256(guideBuffer),
   `SHA256 (${PRODUCT_NAME}.ico) = ${sha256(iconBuffer)}`,
   '',
