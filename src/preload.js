@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('api', {
     });
   },
   copyItem: (id) => ipcRenderer.invoke('items:copy', { id }),
+  pinItem: (id, pinned) => ipcRenderer.invoke('items:pin', { id, pinned: Boolean(pinned) }),
+  removeItem: (id) => ipcRenderer.invoke('items:remove', { id }),
   onItemsChanged: (callback) => subscribe('items:changed', callback),
   onError: (callback) => subscribe('app:error', callback),
 });

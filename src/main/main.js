@@ -13,6 +13,7 @@ const {
   screen,
   session,
   powerMonitor,
+  protocol,
 } = require('electron');
 
 const { initPaths } = require('./paths');
@@ -30,6 +31,11 @@ const IS_UTILITY_RUN = IS_SELF_TEST || IS_PATHS_CHECK;
 const START_HIDDEN = process.argv.includes('--hidden');
 
 const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
+
+// 自定义缩略图协议：必须在 app ready 之前注册 scheme 权限
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'clipimg', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
 
 let paths = null;
 let logger = null;
@@ -127,6 +133,7 @@ function boot() {
     }
 
     setupIpc();
+    registerClipimgProtocol();
     hardenNetwork();
     createMainWindow();
     createTray();
@@ -268,6 +275,40 @@ function createMainWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
+  mainWindow.webContents.on('did-finish-load', () => {
+    logger.info('app', 'renderer loaded');
+  });
+  mainWindow.webContents.on('console-message', (...args) => {
+    try {
+      let level;
+      let message;
+      let line;
+      let sourceId;
+      if (typeof args[1] === 'number') {
+        [, level, message, line, sourceId] = args;
+      } else {
+        const details = args[1] || {};
+        level = details.level;
+        message = details.message;
+        line = details.lineNumber;
+        sourceId = details.sourceId;
+      }
+      const isError = level === 'error' || level === 3;
+      const isWarning = level === 'warning' || level === 2;
+      if (isError || isWarning) {
+        logger.warn('renderer', `${message || '未知渲染层消息'} (${sourceId || 'unknown'}:${line || 0})`);
+      }
+    } catch {
+      // 忽略
+    }
+  });
+  mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+    logger.error('preload', `${preloadPath}: ${error && error.message ? error.message : error}`);
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logger.error('renderer', `process gone reason=${details && details.reason ? details.reason : 'unknown'}`);
+  });
+
   mainWindow.once('ready-to-show', () => {
     if (!START_HIDDEN) mainWindow.show();
   });
@@ -379,16 +420,32 @@ function notifySaveError() {
 
 function decorateDto(dto) {
   if (!dto || dto.type !== 'image' || !dto.image) return dto;
-  let thumbDataUrl = '';
-  try {
-    const file = path.join(paths.thumbsDir, dto.image.thumb);
-    if (fs.existsSync(file)) {
-      thumbDataUrl = `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`;
+  return { ...dto, thumbUrl: `clipimg://thumb/${dto.image.thumb}` };
+}
+
+function registerClipimgProtocol() {
+  protocol.handle('clipimg', async (request) => {
+    try {
+      const url = new URL(request.url);
+      const kind = url.hostname;
+      const name = decodeURIComponent(url.pathname.replace(/^\//, ''));
+      if (!/^[a-f0-9]{64}\.png$/.test(name)) {
+        return new Response('bad request', { status: 400 });
+      }
+      let dir = null;
+      if (kind === 'thumb') dir = paths.thumbsDir;
+      else if (kind === 'image') dir = paths.imagesDir;
+      else return new Response('not found', { status: 404 });
+
+      const buffer = await fs.promises.readFile(path.join(dir, name));
+      return new Response(buffer, {
+        headers: { 'content-type': 'image/png', 'cache-control': 'no-store' },
+      });
+    } catch {
+      return new Response('not found', { status: 404 });
     }
-  } catch {
-    // 缩略图读取失败：保留空占位
-  }
-  return { ...dto, thumbDataUrl };
+  });
+  logger.info('app', 'clipimg protocol registered');
 }
 
 function setupIpc() {
@@ -448,5 +505,46 @@ function setupIpc() {
       logger.warn('ipc', `copy failed: ${err && err.message ? err.message : err}`);
       return { ok: false, error: '复制失败，请重试' };
     }
+  });
+
+  ipcMain.handle('items:pin', async (_event, payload) => {
+    const id = payload && typeof payload.id === 'string' ? payload.id : '';
+    const pinned = payload && typeof payload.pinned === 'boolean' ? payload.pinned : null;
+    if (!id || pinned === null) return { ok: false, error: '参数无效' };
+
+    const result = itemsService.setPinned(id, pinned);
+    if (!result.ok) return { ok: false, error: result.error };
+
+    store.flush().catch(() => notifySaveError());
+    notifyItemsChanged();
+    return { ok: true };
+  });
+
+  ipcMain.handle('items:remove', async (_event, payload) => {
+    const id = payload && typeof payload.id === 'string' ? payload.id : '';
+    if (!id) return { ok: false, error: '参数无效' };
+
+    const item = itemsService.findById(id);
+    if (!item) return { ok: false, error: '条目不存在' };
+
+    if (item.pinned && mainWindow && !mainWindow.isDestroyed()) {
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        title: '删除置顶内容',
+        message: '这条内容已置顶，删除后无法恢复。确定删除吗？',
+        buttons: ['取消', '删除'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (response !== 1) return { ok: true, removed: false, cancelled: true };
+    }
+
+    const result = itemsService.remove(id);
+    if (!result.ok) return { ok: false, error: result.error };
+
+    store.flush().catch(() => notifySaveError());
+    notifyItemsChanged();
+    return { ok: true, removed: true };
   });
 }
