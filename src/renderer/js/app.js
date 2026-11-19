@@ -21,6 +21,18 @@
   const bannerEl = document.getElementById('banner');
   const toastEl = document.getElementById('toast');
   const closeBtn = document.getElementById('btn-close');
+  const titlebarEl = document.getElementById('titlebar');
+  const settingsBtn = document.getElementById('btn-settings');
+  const settingsView = document.getElementById('settings-view');
+  const settingsBack = document.getElementById('settings-back');
+  const settingsClose = document.getElementById('settings-close');
+  const retentionSelect = document.getElementById('retention-select');
+  const retentionCustom = document.getElementById('retention-custom');
+  const autostartToggle = document.getElementById('autostart-toggle');
+  const autostartHint = document.getElementById('autostart-hint');
+  const clearHistoryBtn = document.getElementById('clear-history');
+  const openDataFolderBtn = document.getElementById('open-data-folder');
+  const appVersionEl = document.getElementById('app-version');
 
   if (!window.api) {
     document.body.textContent = '界面初始化失败：预加载脚本未就绪。';
@@ -36,6 +48,8 @@
     composing: false,
     searchTimer: null,
     changeTimer: null,
+    settings: null,
+    settingsOpen: false,
   };
   let toastTimer = null;
 
@@ -321,6 +335,72 @@
     }
   }
 
+  function setSettingsOpen(open) {
+    state.settingsOpen = open;
+    settingsView.classList.toggle('hidden', !open);
+    titlebarEl.classList.toggle('hidden', open);
+    listEl.classList.toggle('hidden', open);
+    if (open) refreshSettings();
+  }
+
+  function renderSettings() {
+    if (!state.settings) return;
+    const days = state.settings.retentionDays;
+    if (days === 3 || days === 5 || days === 7) {
+      retentionSelect.value = String(days);
+      retentionCustom.classList.add('hidden');
+    } else {
+      retentionSelect.value = 'custom';
+      retentionCustom.classList.remove('hidden');
+      retentionCustom.value = String(days);
+    }
+    autostartToggle.setAttribute('aria-checked', state.settings.launchAtLogin ? 'true' : 'false');
+  }
+
+  async function refreshSettings() {
+    try {
+      const info = await window.api.getSettings();
+      state.settings = info.settings;
+      appVersionEl.textContent = info.version || '';
+      autostartHint.classList.toggle('hidden', Boolean(info.packaged));
+      renderSettings();
+    } catch {
+      showToast('读取设置失败');
+    }
+  }
+
+  async function updateRetention(days) {
+    try {
+      const result = await window.api.updateSettings({ retentionDays: days });
+      if (result && result.cancelled) {
+        showToast('已取消修改');
+        await refreshSettings();
+        return;
+      }
+      if (!result || !result.ok) {
+        showToast((result && result.error) || '设置保存失败');
+        await refreshSettings();
+        return;
+      }
+      state.settings = result.settings;
+      renderSettings();
+      showToast('保存天数已更新');
+    } catch {
+      showToast('设置保存失败');
+      await refreshSettings();
+    }
+  }
+
+  async function applyCustomDays() {
+    const value = Number(retentionCustom.value);
+    if (!Number.isInteger(value) || value < 1 || value > 30) {
+      showToast('保存天数需为 1–30 的整数');
+      renderSettings();
+      return;
+    }
+    await updateRetention(value);
+  }
+
   closeBtn.addEventListener('click', () => window.api.hideWindow());
 
   searchToggle.addEventListener('click', () => {
@@ -346,6 +426,10 @@
   document.addEventListener('keydown', (event) => {
     if (event.isComposing) return;
     if (event.key === 'Escape') {
+      if (state.settingsOpen) {
+        setSettingsOpen(false);
+        return;
+      }
       if (isSearchExpanded()) {
         if (searchInput.value.length > 0) {
           clearSearch();
@@ -358,6 +442,7 @@
       }
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
       event.preventDefault();
+      if (state.settingsOpen) setSettingsOpen(false);
       expandSearch();
       searchInput.focus();
       searchInput.select();
@@ -380,6 +465,77 @@
   searchClear.addEventListener('click', () => {
     clearSearch();
     searchInput.focus();
+  });
+
+  settingsBtn.addEventListener('click', () => setSettingsOpen(true));
+  settingsBack.addEventListener('click', () => setSettingsOpen(false));
+  settingsClose.addEventListener('click', () => window.api.hideWindow());
+
+  retentionSelect.addEventListener('change', async () => {
+    if (!state.settings) return;
+    if (retentionSelect.value === 'custom') {
+      retentionCustom.classList.remove('hidden');
+      retentionCustom.value = String(state.settings.retentionDays);
+      retentionCustom.focus();
+      retentionCustom.select();
+      return;
+    }
+    await updateRetention(Number(retentionSelect.value));
+  });
+  retentionCustom.addEventListener('change', () => {
+    applyCustomDays();
+  });
+  retentionCustom.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      applyCustomDays();
+    } else if (event.key === 'Escape') {
+      event.stopPropagation();
+      renderSettings();
+    }
+  });
+
+  autostartToggle.addEventListener('click', async () => {
+    if (!state.settings) return;
+    const next = !state.settings.launchAtLogin;
+    autostartToggle.setAttribute('aria-checked', next ? 'true' : 'false');
+    try {
+      const result = await window.api.updateSettings({ launchAtLogin: next });
+      if (result && result.ok) {
+        state.settings = result.settings;
+        renderSettings();
+        showToast(next ? '已开启开机自启' : '已关闭开机自启');
+      } else {
+        showToast((result && result.error) || '设置保存失败');
+        await refreshSettings();
+      }
+    } catch {
+      showToast('设置保存失败');
+      await refreshSettings();
+    }
+  });
+
+  clearHistoryBtn.addEventListener('click', async () => {
+    try {
+      const result = await window.api.clearHistory();
+      if (result && result.cancelled) return;
+      if (result && result.ok) {
+        showToast(result.cleared > 0 ? `已清空 ${result.cleared} 条记录` : '没有可清空的记录');
+      } else {
+        showToast((result && result.error) || '清空失败');
+      }
+    } catch {
+      showToast('清空失败');
+    }
+  });
+
+  openDataFolderBtn.addEventListener('click', async () => {
+    try {
+      const result = await window.api.openDataFolder();
+      if (!result || !result.ok) showToast('无法打开数据文件夹');
+    } catch {
+      showToast('无法打开数据文件夹');
+    }
   });
 
   listEl.addEventListener('scroll', maybeLoadMore);

@@ -15,6 +15,7 @@ const {
   powerMonitor,
   protocol,
   nativeTheme,
+  shell,
 } = require('electron');
 
 const { initPaths } = require('./paths');
@@ -23,7 +24,7 @@ const { ClipboardWatcher } = require('./clipboard-watcher');
 const { runSelfTest } = require('./selftest');
 const { Store } = require('./store');
 const { ItemService } = require('./items');
-const { SettingsStore } = require('./settings');
+const { SettingsStore, validateRetentionDays } = require('./settings');
 const { prepareImage } = require('./image-files');
 
 const IS_SELF_TEST = process.argv.includes('--selftest');
@@ -133,6 +134,8 @@ function boot() {
       return;
     }
 
+    syncLoginItem(settingsStore.get());
+
     setupIpc();
     registerClipimgProtocol();
     hardenNetwork();
@@ -201,6 +204,23 @@ async function initDataLayer() {
   }
 
   pendingWarnings = [...(settingsResult.warnings || []), ...(loadResult.warnings || [])];
+}
+
+function syncLoginItem(settings) {
+  try {
+    if (!app.isPackaged) {
+      logger.info('app', `login item skipped in dev (launchAtLogin=${settings.launchAtLogin})`);
+      return;
+    }
+    app.setLoginItemSettings({
+      openAtLogin: Boolean(settings.launchAtLogin),
+      path: process.execPath,
+      args: ['--hidden'],
+    });
+    logger.info('app', `login item synced launchAtLogin=${settings.launchAtLogin}`);
+  } catch (err) {
+    logger.warn('app', `setLoginItemSettings failed: ${err && err.message ? err.message : err}`);
+  }
 }
 
 function setupShutdownFlush() {
@@ -556,5 +576,107 @@ function setupIpc() {
     store.flush().catch(() => notifySaveError());
     notifyItemsChanged();
     return { ok: true, removed: true };
+  });
+
+  ipcMain.handle('settings:get', () => ({
+    settings: settingsStore.get(),
+    dataDir: paths.dataDir,
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+  }));
+
+  ipcMain.handle('settings:update', async (_event, payload) => {
+    const current = settingsStore.get();
+    const patch = {};
+    const input = payload && typeof payload === 'object' ? payload : {};
+
+    if ('retentionDays' in input) {
+      if (!validateRetentionDays(input.retentionDays)) {
+        return { ok: false, error: '保存天数需为 1–30 的整数' };
+      }
+      patch.retentionDays = Number(input.retentionDays);
+
+      if (patch.retentionDays < current.retentionDays) {
+        const due = itemsService.countDueForRetention(patch.retentionDays);
+        if (due > 0 && mainWindow && !mainWindow.isDestroyed()) {
+          const { response } = await dialog.showMessageBox(mainWindow, {
+            type: 'warning',
+            title: '缩短保存天数',
+            message: `保存天数改为 ${patch.retentionDays} 天后，将清理 ${due} 条过期记录（置顶内容不受影响）。`,
+            buttons: ['取消', '继续'],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true,
+          });
+          if (response !== 1) return { ok: false, cancelled: true };
+        }
+      }
+    }
+
+    if ('launchAtLogin' in input) {
+      patch.launchAtLogin = Boolean(input.launchAtLogin);
+    }
+
+    if (Object.keys(patch).length === 0) return { ok: false, error: '没有可更新的设置' };
+
+    const result = settingsStore.update(patch);
+    if (!result.ok) return result;
+
+    if ('launchAtLogin' in patch) syncLoginItem(result.settings);
+
+    if ('retentionDays' in patch) {
+      const pruned = itemsService.prune({ retentionDays: result.settings.retentionDays, now: Date.now() });
+      if (pruned.totalRemoved > 0) {
+        store.flush().catch(() => notifySaveError());
+        notifyItemsChanged();
+        logger.info('settings', `retention updated to ${result.settings.retentionDays}, pruned=${pruned.totalRemoved}`);
+      }
+    }
+
+    return { ok: true, settings: result.settings };
+  });
+
+  ipcMain.handle('items:clear', async () => {
+    const stats = itemsService.stats();
+    const removable = stats.total - stats.pinned;
+    if (removable <= 0) return { ok: true, cleared: 0 };
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        title: '清空历史',
+        message: `将清空 ${removable} 条未置顶记录，置顶内容会保留。此操作无法撤销。`,
+        buttons: ['取消', '清空'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (response !== 1) return { ok: true, cleared: 0, cancelled: true };
+    }
+
+    const result = itemsService.clearUnpinned();
+    try {
+      await store.flush({ syncBackup: true });
+    } catch (err) {
+      logger.error('items', `clear history flush failed: ${err && err.message ? err.message : err}`);
+      notifySaveError();
+    }
+    notifyItemsChanged();
+    logger.info('items', `clear history cleared=${result.cleared}`);
+    return { ok: true, cleared: result.cleared };
+  });
+
+  ipcMain.handle('app:open-data-folder', async () => {
+    try {
+      const error = await shell.openPath(paths.dataDir);
+      if (error) {
+        logger.warn('app', `open data folder failed: ${error}`);
+        return { ok: false, error: '无法打开数据文件夹' };
+      }
+      return { ok: true };
+    } catch (err) {
+      logger.warn('app', `open data folder failed: ${err && err.message ? err.message : err}`);
+      return { ok: false, error: '无法打开数据文件夹' };
+    }
   });
 }

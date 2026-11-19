@@ -141,6 +141,32 @@ class CDP {
     `(() => { const toggle = document.getElementById('search-toggle'); toggle.click(); return { expanded: document.getElementById('search-wrap').classList.contains('expanded'), aria: toggle.getAttribute('aria-expanded') }; })()`
   );
 
+  output.settingsOpen = await cdp.evaluate(
+    `(() => { document.getElementById('btn-settings').click(); return !document.getElementById('settings-view').classList.contains('hidden'); })()`
+  );
+  await sleep(500);
+  output.settingsInfo = await cdp.evaluate(`window.api.getSettings()`);
+  output.settingsView = await cdp.evaluate(
+    `({ title: document.querySelector('.settings-title').textContent.trim(), version: document.getElementById('app-version').textContent, rows: [...document.querySelectorAll('.setting-row')].map((el) => el.textContent.trim()) })`
+  );
+  output.retentionUpdate = await cdp.evaluate(`window.api.updateSettings({ retentionDays: 7 })`);
+  output.autostartOn = await cdp.evaluate(
+    `(() => { const toggle = document.getElementById('autostart-toggle'); toggle.click(); return toggle.getAttribute('aria-checked'); })()`
+  );
+  await sleep(500);
+  output.autostartOnState = await cdp.evaluate(`window.api.getSettings()`);
+  output.autostartOff = await cdp.evaluate(
+    `(() => { const toggle = document.getElementById('autostart-toggle'); toggle.click(); return toggle.getAttribute('aria-checked'); })()`
+  );
+  await sleep(500);
+  output.autostartOffState = await cdp.evaluate(`window.api.getSettings()`);
+  output.settingsBack = await cdp.evaluate(
+    `(() => { document.getElementById('settings-back').click(); return document.getElementById('settings-view').classList.contains('hidden'); })()`
+  );
+  output.settingsReopen = await cdp.evaluate(
+    `(() => { document.getElementById('btn-settings').click(); return !document.getElementById('settings-view').classList.contains('hidden'); })()`
+  );
+
   output.pinnedId = pinTarget.id;
   console.log(JSON.stringify(output, null, 2));
   cdp.close();

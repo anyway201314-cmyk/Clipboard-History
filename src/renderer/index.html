@@ -18,10 +18,48 @@
         <button id="search-clear" class="clear-btn hidden" type="button" aria-label="清空搜索" title="清空搜索">✕</button>
       </div>
     </div>
+    <button id="btn-settings" class="icon-btn" type="button" aria-label="设置" title="设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h9"/><path d="M17 7h3"/><circle cx="15" cy="7" r="2"/><path d="M4 17h5"/><path d="M13 17h7"/><circle cx="11" cy="17" r="2"/></svg>
+    </button>
     <button id="btn-close" class="icon-btn" type="button" aria-label="关闭窗口" title="关闭">✕</button>
   </header>
   <div id="banner" class="banner hidden"></div>
   <main id="list"></main>
+  <section id="settings-view" class="settings-view hidden">
+    <header class="settings-header">
+      <button id="settings-back" class="icon-btn" type="button" aria-label="返回" title="返回">←</button>
+      <div class="settings-title">设置</div>
+      <button id="settings-close" class="icon-btn" type="button" aria-label="关闭窗口" title="关闭">✕</button>
+    </header>
+    <div class="settings-body">
+      <div class="setting-row">
+        <div class="setting-label">保存天数</div>
+        <div class="setting-control">
+          <select id="retention-select" aria-label="保存天数">
+            <option value="3">3 天</option>
+            <option value="5">5 天</option>
+            <option value="7">7 天</option>
+            <option value="custom">自定义</option>
+          </select>
+          <input id="retention-custom" class="hidden" type="number" min="1" max="30" step="1" aria-label="自定义保存天数">
+        </div>
+      </div>
+      <div class="setting-hint">到期后自动清理旧记录，置顶内容永久保留。</div>
+      <div class="setting-row">
+        <div class="setting-label">开机自动启动</div>
+        <button id="autostart-toggle" class="switch" type="button" role="switch" aria-checked="false" aria-label="开机自动启动"></button>
+      </div>
+      <div id="autostart-hint" class="setting-hint hidden">开发版只保存偏好；打包版启动后生效。</div>
+      <div class="setting-sep"></div>
+      <div class="setting-row">
+        <button id="clear-history" class="text-btn danger" type="button">清空历史</button>
+      </div>
+      <div class="setting-row">
+        <button id="open-data-folder" class="text-btn" type="button">打开数据文件夹</button>
+      </div>
+      <div class="settings-footer">版本 <span id="app-version"></span> · 数据仅保存在本机</div>
+    </div>
+  </section>
   <div id="toast" class="toast"></div>
   <script src="js/time.js"></script>
   <script src="js/app.js"></script>

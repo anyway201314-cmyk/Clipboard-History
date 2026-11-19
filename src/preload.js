@@ -27,6 +27,16 @@ contextBridge.exposeInMainWorld('api', {
   copyItem: (id) => ipcRenderer.invoke('items:copy', { id }),
   pinItem: (id, pinned) => ipcRenderer.invoke('items:pin', { id, pinned: Boolean(pinned) }),
   removeItem: (id) => ipcRenderer.invoke('items:remove', { id }),
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  updateSettings: (patch) => {
+    const safe = patch && typeof patch === 'object' ? patch : {};
+    const payload = {};
+    if ('retentionDays' in safe) payload.retentionDays = safe.retentionDays;
+    if ('launchAtLogin' in safe) payload.launchAtLogin = Boolean(safe.launchAtLogin);
+    return ipcRenderer.invoke('settings:update', payload);
+  },
+  clearHistory: () => ipcRenderer.invoke('items:clear'),
+  openDataFolder: () => ipcRenderer.invoke('app:open-data-folder'),
   onItemsChanged: (callback) => subscribe('items:changed', callback),
   onError: (callback) => subscribe('app:error', callback),
 });
