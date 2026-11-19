@@ -1,0 +1,22 @@
+# 依赖目录
+node_modules/
+
+# 运行时数据（用户数据，绝不提交）
+data/
+data-dev/
+
+# 构建与交付产物
+dist/
+交付/
+
+# 临时与日志文件
+*.tmp
+*.log
+
+# 本地个人配置
+.claude/settings.local.json
+
+# 系统文件
+Thumbs.db
+Desktop.ini
+.DS_Store
