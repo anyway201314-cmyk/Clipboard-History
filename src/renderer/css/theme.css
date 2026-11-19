@@ -1,0 +1,38 @@
+:root {
+  --bg: #0b1e36;
+  --bg-elevated: #12294a;
+  --bg-hover: #17335c;
+  --bg-active: #1b3a66;
+  --border: #1e3a60;
+  --accent: #4c8dff;
+  --accent-hover: #6aa3ff;
+  --accent-soft: rgba(76, 141, 255, 0.16);
+  --text: #e8eef7;
+  --text-secondary: #9fb3cc;
+  --text-muted: #6e82a0;
+  --danger: #e05c5c;
+  --danger-soft: rgba(224, 92, 92, 0.16);
+  --success: #3fa67a;
+  --toast-bg: #17335c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+  user-select: none;
+}

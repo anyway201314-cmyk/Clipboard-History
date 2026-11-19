@@ -59,9 +59,13 @@ Windows 个人剪贴板历史工具：后台记录文字与图片，时间倒序
 | 命令 | 用途 |
 |---|---|
 | `npm start` | 开发运行 |
+| `npm run selftest` | 自动化采集自检（会临时改写剪贴板，结束恢复） |
+| `npm run cpu-test` | 自检 + 4K 图 5 分钟 CPU 实测 |
 | `node --test` | 运行纯逻辑测试 |
-| `npm run dist` | 打包（electron-builder `--dir`） |
+| `npm run dist` | 打包（electron-builder `--dir` + 官方 exe 覆盖） |
 | `npm run seed` | 生成 `data-dev/` 种子数据（仅开发） |
+
+**本机环境注意**：当前终端带有 `ELECTRON_RUN_AS_NODE=1`（VSCode 环境变量），直接运行 Electron 会退化为纯 Node（`require('electron')` 变成路径字符串）。测试/启动必须使用 `env -u ELECTRON_RUN_AS_NODE npm ...`，或先清除该变量。
 
 ## git 约定
 

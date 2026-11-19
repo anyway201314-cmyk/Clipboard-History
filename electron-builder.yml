@@ -1,0 +1,18 @@
+appId: com.local.clipboardhistory
+productName: 历史剪贴板
+directories:
+  output: dist
+  buildResources: build
+files:
+  - package.json
+  - src/**/*
+asar: true
+extraResources:
+  - from: assets
+    to: assets
+win:
+  target:
+    - dir
+  # 不修改官方 electron.exe（改图标/版本信息会使文件变成未知哈希，
+  # 在开启“智能应用控制”的 Windows 11 上会被拦截）。
+  signAndEditExecutable: false

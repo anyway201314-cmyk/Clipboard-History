@@ -1,0 +1,21 @@
+{
+  "name": "clipboard-history",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows 本地历史剪贴板（阶段 1 技术验证骨架）",
+  "productName": "历史剪贴板",
+  "main": "src/main/main.js",
+  "author": "local",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "selftest": "electron . --selftest",
+    "cpu-test": "electron . --selftest --cpu-test=300",
+    "icons": "node scripts/make-icons.js",
+    "dist": "electron-builder --win --dir && node scripts/restore-exe.js"
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0"
+  }
+}
