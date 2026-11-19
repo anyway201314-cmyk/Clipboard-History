@@ -12,6 +12,8 @@
     "selftest": "electron . --selftest",
     "cpu-test": "electron . --selftest --cpu-test=300",
     "icons": "node scripts/make-icons.js",
+    "seed": "node scripts/seed-dev-data.js",
+    "test": "node --test tests/",
     "dist": "electron-builder --win --dir && node scripts/restore-exe.js"
   },
   "devDependencies": {

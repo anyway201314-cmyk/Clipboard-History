@@ -3,10 +3,13 @@
 (() => {
   const listEl = document.getElementById('list');
   const statusEl = document.getElementById('status');
+  const bannerEl = document.getElementById('banner');
   const toastEl = document.getElementById('toast');
   const closeBtn = document.getElementById('btn-close');
 
-  const items = [];
+  let items = [];
+  let total = 0;
+  let warnings = [];
   let toastTimer = null;
 
   if (!window.api) {
@@ -43,7 +46,7 @@
 
   function createCard(item) {
     const card = document.createElement('div');
-    card.className = `card${item.type === 'image' ? ' image' : ''}`;
+    card.className = `card${item.type === 'image' ? ' image' : ''}${item.pinned ? ' pinned' : ''}`;
 
     if (item.type === 'text') {
       const preview = document.createElement('div');
@@ -71,9 +74,10 @@
     const meta = document.createElement('div');
     meta.className = 'meta';
     const time = document.createElement('span');
-    time.textContent = formatTime(item.createdAt);
+    time.textContent = `${item.pinned ? '置顶 · ' : ''}${formatTime(item.createdAt)}`;
     const detail = document.createElement('span');
-    detail.textContent = item.type === 'text' ? `${item.chars} 字` : `${item.width}×${item.height}`;
+    detail.textContent =
+      item.type === 'text' ? `${item.chars} 字` : `${item.image.width}×${item.image.height}`;
     meta.append(time, detail);
     card.appendChild(meta);
 
@@ -116,17 +120,41 @@
     listEl.scrollTop = scrollTop;
   }
 
+  function renderBanner() {
+    if (warnings.length > 0) {
+      bannerEl.textContent = warnings[0];
+      bannerEl.classList.remove('hidden');
+    } else {
+      bannerEl.textContent = '';
+      bannerEl.classList.add('hidden');
+    }
+  }
+
+  async function loadItems() {
+    try {
+      const result = await window.api.queryItems({ offset: 0, limit: 100 });
+      items = Array.isArray(result.items) ? result.items : [];
+      total = result.total || 0;
+      render();
+    } catch {
+      showToast('加载历史记录失败');
+    }
+  }
+
   async function refreshStatus() {
     try {
       const status = await window.api.getStatus();
       statusEl.textContent = '';
       statusEl.title = `数据目录：${status.dataDir}`;
+      warnings = Array.isArray(status.warnings) ? status.warnings : [];
+      renderBanner();
 
       const parts = [
+        ['已保存', `${status.stored ? status.stored.total : 0} 条`],
         ['CPU', `${status.cpuPercent}%`],
         ['内存', `${status.memoryMB} MB`],
-        ['文字', String(status.stats.texts)],
-        ['图片', String(status.stats.images)],
+        ['本次文字', String(status.stats.texts)],
+        ['本次图片', String(status.stats.images)],
         ['文件跳过', String(status.stats.skippedFiles)],
         ['格式', status.lastTypes && status.lastTypes.length ? status.lastTypes.join(', ') : '空'],
       ];
@@ -150,12 +178,14 @@
     if (event.key === 'Escape') window.api.hideWindow();
   });
 
-  window.api.onCapture((dto) => {
-    items.unshift(dto);
-    render();
+  window.api.onItemsChanged(() => {
+    loadItems();
+  });
+  window.api.onError((payload) => {
+    if (payload && payload.message) showToast(payload.message);
   });
 
-  render();
+  loadItems();
   refreshStatus();
   setInterval(refreshStatus, 2000);
   setInterval(render, 30000);

@@ -61,6 +61,20 @@
   font-weight: 500;
 }
 
+.banner {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  background: var(--danger-soft);
+  border-bottom: 1px solid var(--border);
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.banner.hidden {
+  display: none;
+}
+
 #list {
   flex: 1 1 auto;
   overflow-y: auto;

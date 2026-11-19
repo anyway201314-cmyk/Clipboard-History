@@ -2,7 +2,6 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const {
   app,
   BrowserWindow,
@@ -13,28 +12,38 @@ const {
   nativeImage,
   screen,
   session,
+  powerMonitor,
 } = require('electron');
 
 const { initPaths } = require('./paths');
 const { createLogger } = require('./logger');
 const { ClipboardWatcher } = require('./clipboard-watcher');
 const { runSelfTest } = require('./selftest');
+const { Store } = require('./store');
+const { ItemService } = require('./items');
+const { SettingsStore } = require('./settings');
+const { prepareImage } = require('./image-files');
 
 const IS_SELF_TEST = process.argv.includes('--selftest');
 const IS_PATHS_CHECK = process.argv.includes('--paths-check');
 const IS_UTILITY_RUN = IS_SELF_TEST || IS_PATHS_CHECK;
 const START_HIDDEN = process.argv.includes('--hidden');
 
-const MAX_SESSION_ITEMS = 50;
-const MAX_SESSION_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
 
 let paths = null;
 let logger = null;
 let watcher = null;
+let store = null;
+let itemsService = null;
+let settingsStore = null;
 let mainWindow = null;
 let tray = null;
+let maintenanceTimer = null;
 let isQuitting = false;
-const sessionItems = new Map();
+let allowQuit = false;
+let pendingWarnings = [];
+let lastError = null;
 
 if (!IS_UTILITY_RUN && !app.requestSingleInstanceLock()) {
   app.quit();
@@ -99,25 +108,122 @@ function boot() {
       return;
     }
 
+    try {
+      await initDataLayer();
+    } catch (err) {
+      if (err && err.code === 'FUTURE_SCHEMA') {
+        dialog.showErrorBox(
+          '数据版本过新',
+          '数据文件由更新版本的程序创建，当前程序为避免损坏数据已停止运行。\n请使用最新版本的程序打开。'
+        );
+      } else {
+        dialog.showErrorBox(
+          '数据加载失败',
+          `无法加载历史数据：${err && err.message ? err.message : err}\n\n数据文件已保留，请不要删除 data 文件夹。`
+        );
+      }
+      app.exit(1);
+      return;
+    }
+
     setupIpc();
     hardenNetwork();
     createMainWindow();
     createTray();
     watcher.start();
-    logger.info('app', `started version=${app.getVersion()} packaged=${app.isPackaged} dataDir=${paths.dataDir}`);
+    startMaintenance();
+    setupShutdownFlush();
+    logger.info(
+      'app',
+      `started version=${app.getVersion()} packaged=${app.isPackaged} dataDir=${paths.dataDir} items=${itemsService.stats().total}`
+    );
   });
 
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
+    if (allowQuit) return;
     isQuitting = true;
     if (watcher) watcher.stop();
+    if (maintenanceTimer) {
+      clearInterval(maintenanceTimer);
+      maintenanceTimer = null;
+    }
+    if (!store) return;
+
+    event.preventDefault();
+    const timeout = new Promise((resolve) => setTimeout(resolve, 3000));
+    Promise.race([
+      store.flush().catch((err) => {
+        logger.error('store', `quit flush failed: ${err && err.message ? err.message : err}`);
+      }),
+      timeout,
+    ]).finally(() => {
+      allowQuit = true;
+      app.quit();
+    });
   });
 
   // 托盘应用：窗口全部隐藏/关闭时不退出
   app.on('window-all-closed', () => {});
 }
 
+async function initDataLayer() {
+  settingsStore = new SettingsStore({ dataDir: paths.dataDir, logger });
+  const settingsResult = settingsStore.load();
+
+  store = new Store({ dataDir: paths.dataDir, logger, onSaveError: () => notifySaveError() });
+  const loadResult = await store.load();
+  if (store.dirty) store.markDirty();
+
+  itemsService = new ItemService({
+    store,
+    imagesDir: paths.imagesDir,
+    thumbsDir: paths.thumbsDir,
+    logger,
+  });
+
+  const now = Date.now();
+  const pruned = itemsService.prune({ retentionDays: settingsStore.get().retentionDays, now });
+  if (pruned.totalRemoved > 0) logger.info('items', `startup prune removed=${pruned.totalRemoved}`);
+  const orphans = itemsService.cleanupOrphanFiles();
+  if (orphans > 0) logger.info('items', `orphan files removed=${orphans}`);
+  if (pruned.totalRemoved > 0 || orphans > 0) {
+    await store.flush().catch((err) => {
+      logger.error('store', `startup save failed: ${err && err.message ? err.message : err}`);
+    });
+  }
+
+  pendingWarnings = [...(settingsResult.warnings || []), ...(loadResult.warnings || [])];
+}
+
+function setupShutdownFlush() {
+  try {
+    powerMonitor.on('shutdown', () => {
+      if (watcher) watcher.stop();
+      if (store) store.flush().catch(() => {});
+    });
+  } catch {
+    // powerMonitor 在部分环境不可用：忽略
+  }
+}
+
+function startMaintenance() {
+  maintenanceTimer = setInterval(async () => {
+    try {
+      const pruned = itemsService.prune({ retentionDays: settingsStore.get().retentionDays, now: Date.now() });
+      const orphans = itemsService.cleanupOrphanFiles();
+      if (pruned.totalRemoved > 0 || orphans > 0) {
+        await store.flush();
+        notifyItemsChanged();
+        logger.info('maintenance', `pruned=${pruned.totalRemoved} orphans=${orphans}`);
+      }
+    } catch (err) {
+      logger.error('maintenance', `failed: ${err && err.message ? err.message : err}`);
+      notifySaveError();
+    }
+  }, MAINTENANCE_INTERVAL_MS);
+}
+
 function hardenNetwork() {
-  // 生产环境阻断一切 http/https 请求（本应用无联网功能）
   if (!app.isPackaged) return;
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     if (/^https?:/i.test(details.url || '')) {
@@ -196,7 +302,7 @@ function showMainWindow() {
 function createTray() {
   let icon = nativeImage.createFromPath(resolveAsset('tray-32.png'));
   if (icon.isEmpty()) {
-    icon = nativeImage.createFromPath(resolveAsset('icon.png'));
+    icon = nativeImage.createFromPath(resolveAsset('app-icon.png'));
   }
   tray = new Tray(icon);
   tray.setToolTip('历史剪贴板');
@@ -224,52 +330,65 @@ function createTray() {
 }
 
 function handleCapture(capture) {
-  const id = crypto.randomUUID();
-  const createdAt = Date.now();
-  let dto;
+  if (!itemsService) return;
 
-  if (capture.type === 'text') {
-    dto = {
-      id,
-      type: 'text',
-      createdAt,
-      previewText: capture.text.slice(0, 500),
-      chars: capture.text.length,
-    };
-    sessionItems.set(id, { type: 'text', text: capture.text });
-  } else {
-    let thumbDataUrl = '';
-    try {
-      const image = nativeImage.createFromBuffer(capture.buffer);
-      const width = image.getSize().width;
-      const thumb = width > 320 ? image.resize({ width: 320, quality: 'good' }) : image;
-      thumbDataUrl = thumb.toDataURL();
-    } catch {
-      // 缩略图失败不阻塞采集
+  let result = null;
+  try {
+    if (capture.type === 'text') {
+      result = itemsService.ingestText(capture.text);
+    } else {
+      const prepared = prepareImage(capture.buffer);
+      if (!prepared) {
+        logger.warn('app', 'image decode failed, skipped');
+        return;
+      }
+      result = itemsService.ingestImage({
+        buffer: capture.buffer,
+        hash: capture.hash,
+        thumbBuffer: prepared.thumbBuffer,
+        width: prepared.width,
+        height: prepared.height,
+      });
     }
-    dto = {
-      id,
-      type: 'image',
-      createdAt,
-      width: capture.width,
-      height: capture.height,
-      bytes: capture.buffer.length,
-      thumbDataUrl,
-    };
-    if (capture.buffer.length <= MAX_SESSION_IMAGE_BYTES) {
-      sessionItems.set(id, { type: 'image', buffer: capture.buffer });
-    }
+  } catch (err) {
+    logger.error('app', `ingest failed: ${err && err.message ? err.message : err}`);
+    return;
   }
 
-  while (sessionItems.size > MAX_SESSION_ITEMS) {
-    const oldestKey = sessionItems.keys().next().value;
-    sessionItems.delete(oldestKey);
+  if (!result || !result.ok) {
+    logger.warn('app', `ingest skipped reason=${result && result.reason ? result.reason : 'unknown'}`);
+    return;
   }
 
+  notifyItemsChanged();
+  logger.info('app', `item ${result.updated ? 'updated' : 'created'} id=${result.item.id.slice(0, 8)}`);
+}
+
+function notifyItemsChanged() {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('debug:capture', dto);
+    mainWindow.webContents.send('items:changed');
   }
-  logger.info('app', `session capture id=${id.slice(0, 8)} type=${capture.type}`);
+}
+
+function notifySaveError() {
+  lastError = '数据保存失败，请检查磁盘空间或文件夹权限。';
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('app:error', { message: lastError });
+  }
+}
+
+function decorateDto(dto) {
+  if (!dto || dto.type !== 'image' || !dto.image) return dto;
+  let thumbDataUrl = '';
+  try {
+    const file = path.join(paths.thumbsDir, dto.image.thumb);
+    if (fs.existsSync(file)) {
+      thumbDataUrl = `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`;
+    }
+  } catch {
+    // 缩略图读取失败：保留空占位
+  }
+  return { ...dto, thumbDataUrl };
 }
 
 function setupIpc() {
@@ -286,6 +405,9 @@ function setupIpc() {
     } catch {
       // 忽略
     }
+    const warnings = pendingWarnings.slice();
+    if (lastError) warnings.push(lastError);
+
     return {
       version: app.getVersion(),
       packaged: app.isPackaged,
@@ -295,18 +417,31 @@ function setupIpc() {
       stats: { ...watcher.stats },
       lastTypes: watcher.lastTypes,
       baselineDone: watcher.baselineDone,
+      stored: itemsService ? itemsService.stats() : null,
+      warnings,
     };
   });
 
-  ipcMain.handle('debug:copy', async (_event, payload) => {
+  ipcMain.handle('items:query', (_event, payload) => {
+    const page = payload && typeof payload === 'object' ? payload : {};
+    const search = typeof page.search === 'string' ? page.search.slice(0, 200) : '';
+    const offset = Number.isInteger(page.offset) && page.offset >= 0 ? page.offset : 0;
+    const limit = Number.isInteger(page.limit) && page.limit > 0 ? Math.min(page.limit, 200) : 100;
+    const result = itemsService.query({ search, offset, limit });
+    return { total: result.total, items: result.items.map(decorateDto) };
+  });
+
+  ipcMain.handle('items:copy', async (_event, payload) => {
     try {
       const id = payload && typeof payload.id === 'string' ? payload.id : '';
-      const entry = sessionItems.get(id);
-      if (!entry) return { ok: false, error: '条目已失效' };
-      if (entry.type === 'text') {
-        await watcher.copyText(entry.text);
+      const item = itemsService.findById(id);
+      if (!item) return { ok: false, error: '条目不存在' };
+      if (item.type === 'text') {
+        await watcher.copyText(item.text);
       } else {
-        await watcher.copyImage(entry.buffer);
+        const filePath = path.join(paths.imagesDir, item.image.file);
+        const buffer = await fs.promises.readFile(filePath);
+        await watcher.copyImage(buffer);
       }
       return { ok: true };
     } catch (err) {
