@@ -25,7 +25,7 @@ const { runSelfTest } = require('./selftest');
 const { Store } = require('./store');
 const { ItemService } = require('./items');
 const { SettingsStore, validateRetentionDays } = require('./settings');
-const { prepareImage } = require('./image-files');
+const { prepareImage, pixelHashFromFile } = require('./image-files');
 
 const IS_SELF_TEST = process.argv.includes('--selftest');
 const IS_PATHS_CHECK = process.argv.includes('--paths-check');
@@ -203,9 +203,30 @@ async function initDataLayer() {
   const now = Date.now();
   const pruned = itemsService.prune({ retentionDays: settingsStore.get().retentionDays, now });
   if (pruned.totalRemoved > 0) logger.info('items', `startup prune removed=${pruned.totalRemoved}`);
+
   const orphans = itemsService.cleanupOrphanFiles();
   if (orphans > 0) logger.info('items', `orphan files removed=${orphans}`);
-  if (pruned.totalRemoved > 0 || orphans > 0) {
+
+  // v1 → v2：为历史图片补齐像素哈希（一次性，之后随索引持久化）
+  const migrationStart = Date.now();
+  const pixelMigrated = migrateImagePixelHashes();
+  if (pixelMigrated > 0) {
+    logger.info('items', `pixelHash migrated=${pixelMigrated} ms=${Date.now() - migrationStart}`);
+  }
+
+  // 合并历史遗留的重复条目，保证“每个卡片内容唯一”
+  const deduped = itemsService.dedupeItems();
+  if (deduped.total > 0) {
+    logger.info('items', `dedupe merged text=${deduped.mergedText} image=${deduped.mergedImage}`);
+  }
+
+  if (
+    pruned.totalRemoved > 0 ||
+    orphans > 0 ||
+    pixelMigrated > 0 ||
+    deduped.total > 0 ||
+    store.dirty
+  ) {
     await store.flush().catch((err) => {
       logger.error('store', `startup save failed: ${err && err.message ? err.message : err}`);
     });
@@ -424,6 +445,7 @@ function handleCapture(capture) {
       result = itemsService.ingestImage({
         buffer: capture.buffer,
         hash: capture.hash,
+        pixelHash: prepared.pixelHash,
         thumbBuffer: prepared.thumbBuffer,
         width: prepared.width,
         height: prepared.height,
@@ -441,6 +463,20 @@ function handleCapture(capture) {
 
   notifyItemsChanged();
   logger.info('app', `item ${result.updated ? 'updated' : 'created'} id=${result.item.id.slice(0, 8)}`);
+}
+
+function migrateImagePixelHashes() {
+  let count = 0;
+  for (const item of itemsService.items) {
+    if (item.type !== 'image' || !item.image || item.image.pixelHash) continue;
+    const pixelHash = pixelHashFromFile(path.join(paths.imagesDir, item.image.file));
+    if (pixelHash) {
+      item.image.pixelHash = pixelHash;
+      count += 1;
+    }
+  }
+  if (count > 0) store.markDirty();
+  return count;
 }
 
 function notifyItemsChanged() {
@@ -537,6 +573,12 @@ function setupIpc() {
         const filePath = path.join(paths.imagesDir, item.image.file);
         const buffer = await fs.promises.readFile(filePath);
         await watcher.copyImage(buffer);
+      }
+
+      // 点击卡片也算“再次复制”：更新时间并移到最前（置顶内容移到置顶区最前）
+      if (itemsService.touch(id).ok) {
+        store.flush().catch(() => notifySaveError());
+        notifyItemsChanged();
       }
       return { ok: true };
     } catch (err) {

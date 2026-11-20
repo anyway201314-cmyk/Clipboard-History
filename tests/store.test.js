@@ -136,9 +136,31 @@ test('store: 跳过非法条目并留档', async () => {
 test('store: 数据版本高于程序支持版本时拒绝加载', async () => {
   const dir = makeTempDir();
   try {
-    fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({ schemaVersion: 2, items: [] }), 'utf8');
+    fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({ schemaVersion: 3, items: [] }), 'utf8');
     const store = new Store({ dataDir: dir });
     await assert.rejects(store.load(), (err) => err.code === 'FUTURE_SCHEMA');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('store: v1 数据自动迁移到 v2 并保存', async () => {
+  const dir = makeTempDir();
+  try {
+    fs.writeFileSync(
+      path.join(dir, 'index.json'),
+      JSON.stringify({ schemaVersion: 1, items: [makeTextItem(1)] }),
+      'utf8'
+    );
+    const store = new Store({ dataDir: dir });
+    await store.load();
+    assert.equal(store.state.schemaVersion, 2);
+    assert.equal(store.state.items.length, 1);
+    assert.equal(store.dirty, true);
+
+    await store.flush();
+    const parsed = JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8'));
+    assert.equal(parsed.schemaVersion, 2);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

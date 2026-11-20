@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 const SAVE_DEBOUNCE_MS = 400;
 const MAX_TEXT_CHARS = 200000;
 
@@ -68,9 +68,10 @@ class Store {
         code: 'FUTURE_SCHEMA',
       });
     }
-    if (parsed.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+    if (parsed.schemaVersion < 1) {
       throw Object.assign(new Error('未知的数据版本'), { code: 'UNKNOWN_SCHEMA' });
     }
+    const migrated = parsed.schemaVersion !== CURRENT_SCHEMA_VERSION;
 
     const { items, invalidCount } = this.validateItems(parsed.items);
     if (invalidCount > 0) {
@@ -89,7 +90,10 @@ class Store {
     }
 
     this.state = { schemaVersion: CURRENT_SCHEMA_VERSION, items };
-    if (fromBackup || invalidCount > 0) this.dirty = true;
+    if (fromBackup || invalidCount > 0 || migrated) this.dirty = true;
+    if (migrated) {
+      this.logger.info('store', `schema migrated v${parsed.schemaVersion} -> v${CURRENT_SCHEMA_VERSION}`);
+    }
     return { warnings: this.warnings };
   }
 
@@ -138,6 +142,9 @@ class Store {
       if (!Number.isFinite(image.width) || image.width <= 0) return false;
       if (!Number.isFinite(image.height) || image.height <= 0) return false;
       if (!Number.isFinite(image.size) || image.size < 0) return false;
+      if (image.pixelHash !== undefined) {
+        if (typeof image.pixelHash !== 'string' || !/^[a-f0-9]{64}$/.test(image.pixelHash)) return false;
+      }
     }
     return true;
   }

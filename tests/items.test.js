@@ -34,6 +34,7 @@ function ingestImage(service, seed, now, width = 100, height = 80) {
   return service.ingestImage({
     buffer,
     hash: sha256(buffer),
+    pixelHash: sha256(Buffer.from(`pixel-${seed}`)),
     thumbBuffer: Buffer.from(`thumb-${seed}`),
     width,
     height,
@@ -73,6 +74,166 @@ test('items: 图片入库、文件落盘与去重', () => {
     assert.equal(second.updated, true);
     assert.equal(service.items.length, 1);
     assert.equal(service.items[0].createdAt, 2000);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('items: 文字判重忽略换行与首尾空白', () => {
+  const { dir, service } = makeService();
+  try {
+    service.ingestText('唯一文本', 1000);
+    const result = service.ingestText('  唯一文本\r\n', 2000);
+    assert.equal(result.updated, true);
+    assert.equal(result.merged, 0);
+    assert.equal(service.items.length, 1);
+    assert.equal(service.items[0].createdAt, 2000);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('items: 重复复制置顶内容会移到置顶区最前', () => {
+  const { dir, service } = makeService();
+  try {
+    const first = service.ingestText('置顶A', 1000).item;
+    const second = service.ingestText('置顶B', 2000).item;
+    service.setPinned(first.id, true, 3000);
+    service.setPinned(second.id, true, 4000);
+
+    service.ingestText(' 置顶A\n', 5000);
+    const page = service.query({});
+    assert.equal(service.items.length, 2);
+    assert.equal(page.items[0].id, first.id);
+    assert.equal(first.pinnedAt, 5000);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('items: 点击复制（touch）会把条目移到最前', () => {
+  const { dir, service } = makeService();
+  try {
+    const first = service.ingestText('最早', 1000).item;
+    service.ingestText('最新', 3000);
+    service.touch(first.id, 4000);
+    assert.equal(service.query({}).items[0].id, first.id);
+
+    const pinnedFirst = service.ingestText('置顶1', 5000).item;
+    const pinnedSecond = service.ingestText('置顶2', 6000).item;
+    service.setPinned(pinnedFirst.id, true, 7000);
+    service.setPinned(pinnedSecond.id, true, 8000);
+    service.touch(pinnedFirst.id, 9000);
+
+    const page = service.query({});
+    assert.equal(page.items[0].id, pinnedFirst.id);
+    assert.equal(pinnedFirst.pinnedAt, 9000);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('items: 图片按像素内容去重（不同 PNG 字节、同一画面）', () => {
+  const { dir, service, imagesDir, thumbsDir } = makeService();
+  try {
+    const pixelHash = sha256(Buffer.from('same-pixels'));
+    const bufferA = Buffer.from('png-bytes-A');
+    const bufferB = Buffer.from('png-bytes-B');
+
+    const first = service.ingestImage({
+      buffer: bufferA,
+      hash: sha256(bufferA),
+      pixelHash,
+      thumbBuffer: Buffer.from('thumb-A'),
+      width: 100,
+      height: 80,
+      now: 1000,
+    });
+    assert.equal(first.ok, true);
+
+    const second = service.ingestImage({
+      buffer: bufferB,
+      hash: sha256(bufferB),
+      pixelHash,
+      thumbBuffer: Buffer.from('thumb-B'),
+      width: 100,
+      height: 80,
+      now: 2000,
+    });
+    assert.equal(second.updated, true);
+    assert.equal(service.items.length, 1);
+    assert.equal(service.items[0].createdAt, 2000);
+
+    const fileB = path.join(imagesDir, `${sha256(bufferB)}.png`);
+    const thumbB = path.join(thumbsDir, `${sha256(bufferB)}.png`);
+    assert.ok(fs.existsSync(path.join(imagesDir, first.item.image.file)));
+    assert.ok(!fs.existsSync(fileB));
+    assert.ok(!fs.existsSync(thumbB));
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('items: 启动合并历史遗留的文字/图片重复条目', () => {
+  const { dir, service, imagesDir, thumbsDir } = makeService();
+  try {
+    const pixelHash = sha256(Buffer.from('dup-pixels'));
+    const fileA = `${sha256(Buffer.from('dup-file-a'))}.png`;
+    const fileB = `${sha256(Buffer.from('dup-file-b'))}.png`;
+    fs.writeFileSync(path.join(imagesDir, fileA), 'a');
+    fs.writeFileSync(path.join(imagesDir, fileB), 'b');
+    fs.writeFileSync(path.join(thumbsDir, fileA), 'a');
+    fs.writeFileSync(path.join(thumbsDir, fileB), 'b');
+
+    service.items.push(
+      {
+        id: 'text-1',
+        type: 'text',
+        createdAt: 1000,
+        hash: sha256(Buffer.from('dup text 1')),
+        text: '重复文本',
+        pinned: false,
+        pinnedAt: null,
+      },
+      {
+        id: 'text-2',
+        type: 'text',
+        createdAt: 2000,
+        hash: sha256(Buffer.from('dup text 2')),
+        text: '重复文本\r\n',
+        pinned: true,
+        pinnedAt: 1500,
+      },
+      {
+        id: 'image-1',
+        type: 'image',
+        createdAt: 1000,
+        hash: sha256(Buffer.from('dup-image-1')),
+        image: { file: fileA, thumb: fileA, width: 10, height: 10, size: 1, pixelHash },
+        pinned: false,
+        pinnedAt: null,
+      },
+      {
+        id: 'image-2',
+        type: 'image',
+        createdAt: 2000,
+        hash: sha256(Buffer.from('dup-image-2')),
+        image: { file: fileB, thumb: fileB, width: 10, height: 10, size: 1, pixelHash },
+        pinned: false,
+        pinnedAt: null,
+      }
+    );
+
+    const result = service.dedupeItems();
+    assert.equal(result.mergedText, 1);
+    assert.equal(result.mergedImage, 1);
+    assert.equal(service.items.length, 2);
+    assert.ok(service.findById('text-2'));
+    assert.ok(!service.findById('text-1'));
+    assert.ok(service.findById('image-2'));
+    assert.ok(!service.findById('image-1'));
+    assert.ok(!fs.existsSync(path.join(imagesDir, fileA)));
+    assert.ok(fs.existsSync(path.join(imagesDir, fileB)));
   } finally {
     cleanup(dir);
   }

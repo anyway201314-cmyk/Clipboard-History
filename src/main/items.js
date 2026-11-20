@@ -1,7 +1,11 @@
 'use strict';
 
 // 条目业务逻辑：入库、去重、置顶、删除、清空、过期清理、容量上限、搜索、分页 DTO。
-// 纯 Node 实现（图片处理在 main 的 image-files.js 中完成），便于 node:test。
+// 去重规则：
+//  - 文字：忽略换行符差异（CRLF/CR）与首尾空白，按可见内容判重；
+//  - 图片：按像素内容（pixelHash）判重，而不是 PNG 文件字节。
+// 重复内容再次复制时：更新原卡片时间并移到最前；置顶内容移到置顶区最前。
+// 纯 Node 实现（像素哈希在 main 的 image-files.js 中计算），便于 node:test。
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -18,6 +22,10 @@ function sha256(buffer) {
 
 function isHexHash(value) {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+}
+
+function normalizeText(text) {
+  return text.normalize('NFC').replace(/\r\n?/g, '\n').trim();
 }
 
 class ItemService {
@@ -40,6 +48,19 @@ class ItemService {
     return this.items.find((item) => item.hash === hash);
   }
 
+  findTextMatches(normalizedText) {
+    return this.items.filter((item) => item.type === 'text' && normalizeText(item.text) === normalizedText);
+  }
+
+  findImageMatches(pixelHash) {
+    return this.items.filter((item) => item.type === 'image' && item.image && item.image.pixelHash === pixelHash);
+  }
+
+  removeFromItems(item) {
+    const index = this.items.indexOf(item);
+    if (index !== -1) this.items.splice(index, 1);
+  }
+
   ingestText(text, now = Date.now()) {
     if (typeof text !== 'string' || text.trim().length === 0) {
       return { ok: false, reason: 'empty' };
@@ -49,11 +70,25 @@ class ItemService {
     }
 
     const hash = sha256(Buffer.from(text, 'utf8'));
-    const existing = this.findByHash(hash);
-    if (existing) {
-      existing.createdAt = now;
+    const normalized = normalizeText(text);
+    const matches = this.findTextMatches(normalized);
+
+    if (matches.length > 0) {
+      const canonical = matches.reduce((a, b) => (b.createdAt > a.createdAt ? b : a));
+      const pinnedMatches = matches.filter((item) => item.pinned);
+
+      canonical.text = text;
+      canonical.hash = hash;
+      canonical.createdAt = now;
+      canonical.pinned = pinnedMatches.length > 0;
+      canonical.pinnedAt = canonical.pinned ? now : null;
+
+      for (const item of matches) {
+        if (item !== canonical) this.removeFromItems(item);
+      }
+
       this.store.markDirty();
-      return { ok: true, updated: true, item: existing };
+      return { ok: true, updated: true, item: canonical, merged: matches.length - 1 };
     }
 
     const item = {
@@ -71,34 +106,56 @@ class ItemService {
     return { ok: true, updated: false, item };
   }
 
-  ingestImage({ buffer, hash, thumbBuffer, width, height, now = Date.now() }) {
+  ingestImage({ buffer, hash, pixelHash, thumbBuffer, width, height, now = Date.now() }) {
     if (!Buffer.isBuffer(buffer) || !Buffer.isBuffer(thumbBuffer)) {
       return { ok: false, reason: 'bad-input' };
     }
-    if (!isHexHash(hash)) {
+    if (!isHexHash(hash) || !isHexHash(pixelHash)) {
       return { ok: false, reason: 'bad-hash' };
+    }
+
+    const matches = this.findImageMatches(pixelHash);
+
+    if (matches.length > 0) {
+      const canonical = matches.reduce((a, b) => (b.createdAt > a.createdAt ? b : a));
+      const pinnedMatches = matches.filter((item) => item.pinned);
+
+      // 原图/缩略图缺失时补写（仍复用原条目与文件名）
+      const imagePath = path.join(this.imagesDir, canonical.image.file);
+      const thumbPath = path.join(this.thumbsDir, canonical.image.thumb);
+      if (!fs.existsSync(imagePath)) this.writeFileAtomic(imagePath, buffer);
+      if (!fs.existsSync(thumbPath)) this.writeFileAtomic(thumbPath, thumbBuffer);
+
+      canonical.image.pixelHash = pixelHash;
+      canonical.createdAt = now;
+      canonical.pinned = pinnedMatches.length > 0;
+      canonical.pinnedAt = canonical.pinned ? now : null;
+
+      for (const item of matches) {
+        if (item !== canonical) {
+          this.removeFromItems(item);
+          this.deleteFilesFor(item);
+        }
+      }
+
+      this.store.markDirty();
+      return { ok: true, updated: true, item: canonical, merged: matches.length - 1 };
     }
 
     const file = `${hash}.png`;
     const thumb = `${hash}.png`;
     const imagePath = path.join(this.imagesDir, file);
     const thumbPath = path.join(this.thumbsDir, thumb);
-    const existing = this.findByHash(hash);
-
-    if (existing) {
-      if (!fs.existsSync(imagePath) && !this.writeFileAtomic(imagePath, buffer)) {
-        return { ok: false, reason: 'io' };
-      }
-      if (!fs.existsSync(thumbPath)) this.writeFileAtomic(thumbPath, thumbBuffer);
-      existing.createdAt = now;
-      this.store.markDirty();
-      return { ok: true, updated: true, item: existing };
-    }
 
     if (!this.writeFileAtomic(imagePath, buffer)) {
       return { ok: false, reason: 'io' };
     }
     if (!this.writeFileAtomic(thumbPath, thumbBuffer)) {
+      try {
+        fs.rmSync(imagePath, { force: true });
+      } catch {
+        // 忽略
+      }
       return { ok: false, reason: 'io' };
     }
 
@@ -107,7 +164,7 @@ class ItemService {
       type: 'image',
       createdAt: now,
       hash,
-      image: { file, thumb, width, height, size: buffer.length },
+      image: { file, thumb, width, height, size: buffer.length, pixelHash },
       pinned: false,
       pinnedAt: null,
     };
@@ -143,6 +200,16 @@ class ItemService {
     return { ok: true, item };
   }
 
+  // 复制（包括点击卡片）后调用：更新时间并移到最前；置顶内容移到置顶区最前
+  touch(id, now = Date.now()) {
+    const item = this.findById(id);
+    if (!item) return { ok: false, error: '条目不存在' };
+    item.createdAt = now;
+    if (item.pinned) item.pinnedAt = now;
+    this.store.markDirty();
+    return { ok: true, item };
+  }
+
   remove(id) {
     const index = this.items.findIndex((item) => item.id === id);
     if (index === -1) return { ok: false, error: '条目不存在' };
@@ -165,6 +232,62 @@ class ItemService {
     for (const item of removed) this.deleteFilesFor(item);
     this.store.markDirty();
     return { ok: true, cleared: removed.length };
+  }
+
+  // 启动时合并历史遗留的重复条目（文字按归一化内容，图片按 pixelHash）
+  dedupeItems() {
+    let mergedText = 0;
+    let mergedImage = 0;
+
+    const textGroups = new Map();
+    for (const item of [...this.items]) {
+      if (item.type !== 'text') continue;
+      const key = normalizeText(item.text);
+      if (!textGroups.has(key)) textGroups.set(key, []);
+      textGroups.get(key).push(item);
+    }
+    for (const group of textGroups.values()) {
+      if (group.length < 2) continue;
+      const canonical = group.reduce((a, b) => (b.createdAt > a.createdAt ? b : a));
+      const pinnedMatches = group.filter((item) => item.pinned);
+      if (pinnedMatches.length > 0) {
+        canonical.pinned = true;
+        canonical.pinnedAt = Math.max(...pinnedMatches.map((item) => item.pinnedAt || 0));
+      }
+      for (const item of group) {
+        if (item !== canonical) {
+          this.removeFromItems(item);
+          mergedText += 1;
+        }
+      }
+    }
+
+    const imageGroups = new Map();
+    for (const item of [...this.items]) {
+      if (item.type !== 'image' || !item.image || !item.image.pixelHash) continue;
+      const key = item.image.pixelHash;
+      if (!imageGroups.has(key)) imageGroups.set(key, []);
+      imageGroups.get(key).push(item);
+    }
+    for (const group of imageGroups.values()) {
+      if (group.length < 2) continue;
+      const canonical = group.reduce((a, b) => (b.createdAt > a.createdAt ? b : a));
+      const pinnedMatches = group.filter((item) => item.pinned);
+      if (pinnedMatches.length > 0) {
+        canonical.pinned = true;
+        canonical.pinnedAt = Math.max(...pinnedMatches.map((item) => item.pinnedAt || 0));
+      }
+      for (const item of group) {
+        if (item !== canonical) {
+          this.removeFromItems(item);
+          this.deleteFilesFor(item);
+          mergedImage += 1;
+        }
+      }
+    }
+
+    if (mergedText + mergedImage > 0) this.store.markDirty();
+    return { mergedText, mergedImage, total: mergedText + mergedImage };
   }
 
   countDueForRetention(retentionDays, now = Date.now()) {
@@ -339,4 +462,13 @@ class ItemService {
   }
 }
 
-module.exports = { ItemService, MAX_TEXT_CHARS, MAX_ITEMS, PREVIEW_CHARS, DAY_MS, sha256, isHexHash };
+module.exports = {
+  ItemService,
+  MAX_TEXT_CHARS,
+  MAX_ITEMS,
+  PREVIEW_CHARS,
+  DAY_MS,
+  sha256,
+  isHexHash,
+  normalizeText,
+};
